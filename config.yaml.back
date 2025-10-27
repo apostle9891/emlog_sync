@@ -1,0 +1,59 @@
+# Emlog 博客同步配置文件
+
+# Emlog API 配置
+emlog:
+  base_url: "http://yourdomain.com"  # 你的 Emlog 博客地址
+  api_key: "your_api_key_here"         # Emlog API Key（后台获取）
+  author_uid: 1                         # 作者用户 ID
+  default_category_id: 16                # 默认分类 ID,用于文章没有指定分类时使用
+
+# Git 配置
+git:
+  work_tree: "/home/mh/tmp/emlog/blog"            # Git 工作目录（存放 Markdown 文件）
+                                                   # 图片路径也相对于此目录，如：
+                                                   # images/pic.png → work_tree/images/pic.png
+
+# 初始化配置（仅首次运行时生效）
+init:
+  mode: "safe"        # 初始化模式：
+                      # - safe: 安全模式，仅建立缓存，不同步
+                      # - sync: 全量同步，立即发布所有文章
+                      # - match: 智能匹配（暂未实现）
+  match_by: "title"   # 匹配规则：title | date | title_and_date
+  scan_existing: true # 是否扫描 Emlog 已有文章
+
+# 文件忽略规则（支持 glob 模式）
+ignore_patterns:
+  - "README.md"
+  - "CHANGELOG.md"
+  - "LICENSE.md"
+  - "draft/*"           # 忽略 draft 目录下的所有文件
+  - "*.draft.md"        # 忽略以 .draft.md 结尾的文件
+  - "test/*"
+  - "images/**/*.md"    # 忽略 images 目录下的 md 文件（通常是误创建的）
+  - "gallery/*"         # 忽略相册目录
+  - "Pasted.md"
+
+# AI 配置（用于生成摘要）
+ai:
+  enabled: false        # 是否启用 AI 生成摘要（暂未实现，使用简单截取）
+  provider: "openai"    # openai | anthropic | local
+  api_key: "sk-xxx"
+  model: "gpt-4"
+  summary_length: 100   # 摘要字数
+
+# 缓存文件路径
+cache_file: ".emlog_cache.json"
+
+# 同步配置
+sync:
+  request_delay: 0.5    # 请求延迟（秒），避免批量发布时请求过快导致服务器错误
+
+# 重试配置
+max_retries: 3          # API 调用失败时的最大重试次数
+
+# 日志配置
+logging:
+  level: "INFO"         # 日志级别：DEBUG | INFO | WARNING | ERROR
+  file: "emlog_sync.log"  # 日志文件路径
+

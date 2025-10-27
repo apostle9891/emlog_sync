@@ -1,0 +1,8 @@
+# 核心依赖
+requests>=2.31.0
+pyyaml>=6.0
+
+# 可选依赖（如需 AI 摘要生成）
+# openai>=1.0.0
+# anthropic>=0.30.0
+

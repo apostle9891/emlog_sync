@@ -1,0 +1,62 @@
+# Emlog 同步工具生成的文件
+.emlog_cache.json
+emlog_sync.log
+error_response_*.html
+blog
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 虚拟环境
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# 配置文件（可选，如果包含敏感信息）
+# config.yaml
+
+# 临时文件
+*.tmp
+*.bak
+*.log.*
+test_*.py
+debug_*.py
+
