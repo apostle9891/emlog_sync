@@ -3,6 +3,7 @@
 emlog_sync.log
 error_response_*.html
 blog
+config.yaml
 
 # Python
 __pycache__/

@@ -230,17 +230,41 @@ class EmlogAPI:
             raise
     
     def get_categories(self, force_refresh: bool = False) -> List[Dict]:
-        """获取分类列表"""
+        """获取分类列表（包括子分类）"""
         if self.categories_cache is None or force_refresh:
             data = self._request('sort_list')
-            self.categories_cache = data.get('sorts', [])
+            sorts = data.get('sorts', [])
+            
+            # 展平分类列表（包含子分类）
+            flat_categories = []
+            def flatten_categories(categories):
+                for cat in categories:
+                    flat_cat = {
+                        'sortid': cat['sid'],  # 使用 sid 作为分类ID
+                        'sortname': cat['sortname'],
+                        'pid': cat['pid']
+                    }
+                    flat_categories.append(flat_cat)
+                    
+                    # 递归处理子分类
+                    children = cat.get('children', [])
+                    if children:
+                        flatten_categories(children)
+            
+            flatten_categories(sorts)
+            self.categories_cache = flat_categories
+            
+            # 调试日志
+            cat_names = [f"{cat['sortname']} (ID: {cat['sortid']})" for cat in flat_categories]
+            logging.debug(f"获取到的分类列表: {', '.join(cat_names)}")
+        
         return self.categories_cache
     
     def get_category_id(self, category_names: List[str]) -> int:
-        """根据分类名称获取分类 ID，如果不存在则使用默认分类
+        """根据分类名称获取分类 ID
         
         Args:
-            category_names: 分类名称列表，取最后一个作为目标分类
+            category_names: 分类名称列表，如 ["产品", "产品观点"]
         
         Returns:
             分类ID
@@ -250,18 +274,43 @@ class EmlogAPI:
             logging.debug("未指定分类，使用默认分类")
             return self.default_category_id
         
-        # 取最后一个分类作为目标分类
-        target_category = category_names[-1]
+        # 获取所有分类
         categories = self.get_categories()
+        if not categories:
+            logging.warning("获取分类列表为空，使用默认分类")
+            return self.default_category_id
         
-        # 查找是否存在该分类
-        for cat in categories:
-            if cat['sortname'] == target_category:
-                logging.debug(f"找到分类: {target_category} (ID: {cat['sortid']})")
-                return int(cat['sortid'])
+        # 构建分类名称到分类信息的映射
+        category_map = {cat['sortname']: cat for cat in categories}
         
-        # 分类不存在，使用默认分类
-        logging.warning(f"分类不存在: {target_category}，使用默认分类 (ID: {self.default_category_id})")
+        # 尝试匹配最后一级分类
+        target_category = category_names[-1]
+        if target_category in category_map:
+            category_id = int(category_map[target_category]['sortid'])
+            
+            # 验证父分类是否匹配
+            if len(category_names) > 1:
+                parent_name = category_names[-2]
+                parent_id = category_map[target_category]['pid']
+                
+                # 查找父分类是否匹配
+                for cat in categories:
+                    if cat['sortid'] == parent_id and cat['sortname'] == parent_name:
+                        logging.info(f"找到分类: {parent_name} -> {target_category} (ID: {category_id})")
+                        return category_id
+                
+                # 父分类不匹配，使用默认分类
+                logging.warning(f"父分类不匹配: {parent_name} -> {target_category}，使用默认分类")
+                return self.default_category_id
+            else:
+                # 单级分类，直接使用
+                logging.info(f"找到分类: {target_category} (ID: {category_id})")
+                return category_id
+        
+        # 如果分类不存在，使用默认分类
+        categories_str = ' -> '.join(category_names)
+        logging.warning(f"分类不存在: {categories_str}，使用默认分类 (ID: {self.default_category_id})")
+        logging.debug(f"可用分类: {list(category_map.keys())}")
         return self.default_category_id
     
     def upload_image(self, image_path: str) -> str:
@@ -286,13 +335,19 @@ class EmlogAPI:
     
     def create_article(self, article_data: Dict) -> int:
         """发布新文章"""
+        # 调试：打印发送的数据
+        logging.debug(f"发送文章数据: {article_data}")
         data = self._request('article_post', 'POST', article_data)
         return int(data['article_id'])
     
     def update_article(self, article_data: Dict):
-        """更新文章"""
-        # 使用 article_edit 而不是 article_draft_edit
-        self._request('article_edit', 'POST', article_data)
+        """更新文章
+        
+        注意：Emlog API 使用 article_post 接口来更新文章，
+        需要传入文章ID来区分是新建还是更新
+        """
+        # 使用 article_post 接口，通过传入 id 来更新文章
+        self._request('article_post', 'POST', article_data)
     
     def delete_article(self, article_id: int):
         """删除文章"""
@@ -365,7 +420,7 @@ def build_article_data(front_matter: Dict, content: str, excerpt: str,
     categories = front_matter.get('categories', [])
     if isinstance(categories, str):
         categories = [categories]
-    data['sortid'] = api.get_category_id(categories)
+    data['sort_id'] = api.get_category_id(categories)
     
     # 标签
     tags = front_matter.get('tags', [])
@@ -423,7 +478,7 @@ def build_article_data(front_matter: Dict, content: str, excerpt: str,
     else:
         data['allow_remark'] = 'y'
     
-    # 发布时间（Emlog使用 Unix 时间戳）
+    # 发布时间（Emlog使用发布时间，如：2022-05-03 23:30:16）
     date = front_matter.get('date')
     if date:
         try:
@@ -442,13 +497,13 @@ def build_article_data(front_matter: Dict, content: str, excerpt: str,
                     dt = datetime.fromisoformat(date_str)
             else:
                 dt = date
-            data['date'] = int(dt.timestamp())
+            data['post_date'] = dt.strftime('%Y-%m-%d %H:%M:%S')
         except Exception as e:
             logging.warning(f"日期解析失败: {date}, 使用当前时间")
-            data['date'] = int(datetime.now().timestamp())
+            data['post_date'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     else:
         # 没有日期，使用当前时间
-        data['date'] = int(datetime.now().timestamp())
+        data['post_date'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     return data
 
