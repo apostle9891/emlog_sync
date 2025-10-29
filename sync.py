@@ -344,11 +344,10 @@ class EmlogAPI:
     def update_article(self, article_data: Dict):
         """更新文章
         
-        注意：Emlog API 使用 article_post 接口来更新文章，
-        需要传入文章ID来区分是新建还是更新
+        使用 article_draft_edit 接口来更新文章
         """
-        # 使用 article_post 接口，通过传入 id 来更新文章
-        self._request('article_post', 'POST', article_data)
+        # 使用 article_draft_edit 接口更新文章
+        self._request('article_draft_edit', 'POST', article_data)
     
     def delete_article(self, article_id: int):
         """删除文章"""
@@ -359,6 +358,7 @@ class EmlogAPI:
 def process_images(content: str, work_tree: str, api: EmlogAPI) -> str:
     """处理 Markdown 中的图片"""
     import urllib.parse
+    from urllib.parse import urlparse
     
     pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
     
@@ -366,8 +366,26 @@ def process_images(content: str, work_tree: str, api: EmlogAPI) -> str:
         alt_text = match.group(1)
         image_path = match.group(2)
         
-        # 外部图片不处理
+        # 检查是否是远程URL
         if image_path.startswith('http'):
+            # 检查是否已经是Emlog服务器的图片（避免重复上传）
+            
+            try:
+                base_parsed = urlparse(api.base_url)
+                image_parsed = urlparse(image_path)
+                
+                # 比较域名（包括端口号）
+                base_netloc = base_parsed.netloc.lower()
+                image_netloc = image_parsed.netloc.lower()
+                
+                # 如果图片URL的域名与Emlog服务器域名相同，说明已经上传过，不处理
+                if base_netloc == image_netloc:
+                    logging.debug(f"图片已存在于Emlog服务器，跳过上传: {image_path}")
+                    return match.group(0)
+            except Exception as e:
+                logging.debug(f"解析URL失败，跳过域名检查: {e}")
+            
+            # 外部其他服务器的图片，不处理
             return match.group(0)
         
         # URL解码（处理 %20 等编码）
