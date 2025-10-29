@@ -13,6 +13,7 @@ import logging
 import requests
 import yaml
 import re
+import argparse
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -425,9 +426,9 @@ def build_article_data(front_matter: Dict, content: str, excerpt: str,
     # 标签
     tags = front_matter.get('tags', [])
     if isinstance(tags, list):
-        data['tag'] = ','.join(tags)
+        data['tags'] = ','.join(tags)
     elif isinstance(tags, str):
-        data['tag'] = tags
+        data['tags'] = tags
     
     # 封面（如果是本地路径，需要先上传到 Emlog）
     cover = front_matter.get('cover', '')
@@ -674,14 +675,23 @@ def initialize_match_mode(files: List[str], work_tree: str, config: Dict,
 # ==================== 状态更新 ====================
 
 def update_file_status(cache: Dict, current_files: List[str], 
-                       work_tree: str, ignore_patterns: List[str]) -> Dict:
-    """对比文件系统与缓存，更新状态"""
+                       work_tree: str, ignore_patterns: List[str], force_update: bool = False) -> Dict:
+    """对比文件系统与缓存，更新状态
+    
+    Args:
+        cache: 缓存数据
+        current_files: 当前文件列表
+        work_tree: 工作目录
+        ignore_patterns: 忽略模式列表
+        force_update: 是否强制更新所有文件（包括已同步的）
+    """
     stats = {
         'unsynced': 0,
         'modified': 0,
         'deleted': 0,
         'synced': 0,
-        'ignored': 0
+        'ignored': 0,
+        'force_updated': 0
     }
     
     current_files_set = set(current_files)
@@ -712,8 +722,15 @@ def update_file_status(cache: Dict, current_files: List[str],
             cached_hash = cached_info.get('md5_hash', '')
             cached_status = cached_info.get('status', '')
             
+            # 强制更新模式：将所有已同步的文件标记为需要更新
+            if force_update and cached_status == 'synced':
+                cache['files'][file_path]['status'] = 'modified'
+                cache['files'][file_path]['md5_hash'] = current_hash
+                cache['files'][file_path]['last_modified'] = current_mtime
+                print(f"  [强制更新] {file_path}")
+                stats['force_updated'] += 1
             # 对比 hash
-            if current_hash == cached_hash:
+            elif current_hash == cached_hash:
                 if cached_status == 'synced':
                     stats['synced'] += 1
                 elif cached_status == 'failed':
@@ -747,6 +764,8 @@ def update_file_status(cache: Dict, current_files: List[str],
     print(f"  已修改 (modified): {stats['modified']} 个")
     print(f"  已删除 (deleted): {stats['deleted']} 个")
     print(f"  已同步 (synced): {stats['synced']} 个")
+    if force_update and stats['force_updated'] > 0:
+        print(f"  强制更新 (force_updated): {stats['force_updated']} 个")
     
     return cache
 
@@ -914,10 +933,22 @@ def sync_to_emlog(cache: Dict, work_tree: str, config: Dict) -> Dict:
 
 # ==================== 主程序 ====================
 
+def parse_arguments():
+    """解析命令行参数"""
+    parser = argparse.ArgumentParser(description='Emlog 博客同步程序')
+    parser.add_argument('--forceupdate', action='store_true', 
+                       help='强制更新所有文件，包括已同步的文件')
+    return parser.parse_args()
+
 def main():
     """主程序"""
+    # 解析命令行参数
+    args = parse_arguments()
+    
     print("=" * 60)
     print("Emlog 同步程序启动")
+    if args.forceupdate:
+        print("模式: 强制更新模式")
     print("=" * 60)
     
     # 加载配置
@@ -954,7 +985,7 @@ def main():
     # 对比状态
     print("\n[状态对比] 对比文件系统与缓存...")
     cache_manager.cache = update_file_status(
-        cache_manager.cache, current_files, work_tree, ignore_patterns
+        cache_manager.cache, current_files, work_tree, ignore_patterns, args.forceupdate
     )
     
     # 同步到 Emlog

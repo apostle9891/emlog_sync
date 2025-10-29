@@ -181,7 +181,7 @@ sticky: "1"                          # 可选，1=置顶
 | Markdown 字段 | Emlog API 字段 | 类型 | 说明 |
 |--------------|----------------|------|------|
 | `title` | `title` | string | 文章标题 |
-| `tags` | `tag` | string | 逗号分隔，如："标签1,标签2" |
+| `tags` | `tags` | string | 逗号分隔，如："标签1,标签2" |
 | `categories` | `sort_id` | int | **需要先查询分类ID** |
 | `cover` | `cover` | string | 封面图URL（需要先上传）|
 | `sticky` | `top` | string | "y"=置顶, "n"=不置顶 |
