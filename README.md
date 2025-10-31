@@ -2,6 +2,10 @@
 
 自动将 Git 仓库中的 Markdown 文件同步到 Emlog 博客。
 
+## 修改记录
+2025.10.29 新增强制更新功能，通过--forceupdate参数可以强制更新文章，即使重试次数达到上限也要同步
+2025.10.31 新增alias字段，用于设置文章别名,这样文档删除链接不变。但是注意emlog代码需要修改，可以查看[文档][https://blog.askerlab.com/emlog_sync]
+
 ## 核心功能
 
 - ✅ 自动检测文件变更（新增/修改/删除）
@@ -134,7 +138,7 @@ tail -f emlog_sync.log
 grep ERROR emlog_sync.log
 ```
 
-## Markdown Front Matter
+## obsidan每篇文章的模板
 
 在 Markdown 文件开头添加 Front Matter：
 
@@ -151,6 +155,7 @@ cover: /images/cover.png
 published: "true"
 sticky: "0"
 comments: true
+alias: xxx
 ---
 
 文章正文内容...
@@ -168,7 +173,7 @@ comments: true
 | `published` | 是否发布（true/false） | true |
 | `sticky` | 是否置顶（0/1） | 0 |
 | `comments` | 是否允许评论 | true |
-
+| `alias` | 文章别名 | 无 |
 ## 文件状态
 
 Map 缓存（`.emlog_cache.json`）中记录了每个文件的状态：

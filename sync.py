@@ -347,7 +347,7 @@ class EmlogAPI:
         使用 article_draft_edit 接口来更新文章
         """
         # 使用 article_draft_edit 接口更新文章
-        self._request('article_draft_edit', 'POST', article_data)
+        self._request('article_update', 'POST', article_data)
     
     def delete_article(self, article_id: int):
         """删除文章"""
@@ -496,6 +496,11 @@ def build_article_data(front_matter: Dict, content: str, excerpt: str,
         data['allow_remark'] = 'n' if str(comments).lower() == 'false' else 'y'
     else:
         data['allow_remark'] = 'y'
+    
+    # 别名
+    alias = front_matter.get('alias')
+    if alias:
+        data['alias'] = alias
     
     # 发布时间（Emlog使用发布时间，如：2022-05-03 23:30:16）
     date = front_matter.get('date')
@@ -789,8 +794,15 @@ def update_file_status(cache: Dict, current_files: List[str],
 
 # ==================== 同步执行 ====================
 
-def sync_to_emlog(cache: Dict, work_tree: str, config: Dict) -> Dict:
-    """根据状态同步到 Emlog"""
+def sync_to_emlog(cache: Dict, work_tree: str, config: Dict, force_update: bool = False) -> Dict:
+    """根据状态同步到 Emlog
+    
+    Args:
+        cache: 缓存数据
+        work_tree: 工作目录
+        config: 配置信息
+        force_update: 是否强制更新（即使重试次数达到上限也要同步）
+    """
     import time
     
     api = EmlogAPI(config)
@@ -903,15 +915,22 @@ def sync_to_emlog(cache: Dict, work_tree: str, config: Dict) -> Dict:
     for file_path, file_info in files_to_retry:
         retry_count = file_info.get('retry_count', 0)
         
-        if retry_count >= max_retries:
+        # 强制更新模式下，即使达到重试上限也要继续尝试
+        if retry_count >= max_retries and not force_update:
             print(f"\n[跳过] {file_path} (重试次数已达上限: {retry_count}/{max_retries})")
             print(f"       错误: {file_info.get('error_message', '未知错误')}")
             stats['failed'] += 1
             continue
+        elif retry_count >= max_retries and force_update:
+            print(f"\n[强制重试] {file_path} (重试次数已达上限: {retry_count}/{max_retries}，强制同步)")
+            print(f"       错误: {file_info.get('error_message', '未知错误')}")
         
         try:
             emlog_id = file_info.get('emlog_id')
-            print(f"\n[重试] {file_path} (第 {retry_count + 1} 次)")
+            if force_update and retry_count >= max_retries:
+                print(f"\n[强制重试] {file_path} (第 {retry_count + 1} 次，强制模式)")
+            else:
+                print(f"\n[重试] {file_path} (第 {retry_count + 1} 次)")
             
             if emlog_id:
                 update_article(file_path, emlog_id, work_tree, api, config)
@@ -1008,7 +1027,7 @@ def main():
     
     # 同步到 Emlog
     print("\n[开始同步] 根据状态同步到 Emlog...")
-    cache_manager.cache = sync_to_emlog(cache_manager.cache, work_tree, config)
+    cache_manager.cache = sync_to_emlog(cache_manager.cache, work_tree, config, args.forceupdate)
     
     # 保存缓存
     cache_manager.save()

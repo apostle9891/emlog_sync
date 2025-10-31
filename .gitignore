@@ -27,7 +27,8 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
-
+tempCodeRunnerFile.py
+test/*
 # 虚拟环境
 venv/
 ENV/
