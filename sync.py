@@ -71,7 +71,8 @@ class CacheManager:
         return {
             "version": "1.0",
             "last_sync": datetime.now().isoformat(),
-            "files": {}
+            "files": {},
+            "images": {}  # 图片映射：本地路径 -> {url, md5}
         }
     
     def exists(self) -> bool:
@@ -344,9 +345,9 @@ class EmlogAPI:
     def update_article(self, article_data: Dict):
         """更新文章
         
-        使用 article_draft_edit 接口来更新文章
+        使用 article_update 接口来更新文章
         """
-        # 使用 article_draft_edit 接口更新文章
+        # 使用 article_update 接口更新文章
         self._request('article_update', 'POST', article_data)
     
     def delete_article(self, article_id: int):
@@ -355,10 +356,25 @@ class EmlogAPI:
 
 # ==================== 文章处理 ====================
 
-def process_images(content: str, work_tree: str, api: EmlogAPI) -> str:
-    """处理 Markdown 中的图片"""
+def process_images(content: str, work_tree: str, api: EmlogAPI, cache: Dict = None) -> str:
+    """处理 Markdown 中的图片
+    
+    Args:
+        content: Markdown 内容
+        work_tree: 工作目录
+        api: EmlogAPI 实例
+        cache: 缓存数据，用于记录已上传的图片
+    """
     import urllib.parse
     from urllib.parse import urlparse
+    
+    # 初始化图片映射（如果不存在）
+    if cache is not None:
+        if 'images' not in cache:
+            cache['images'] = {}
+        image_map = cache['images']
+    else:
+        image_map = {}
     
     pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
     
@@ -369,7 +385,6 @@ def process_images(content: str, work_tree: str, api: EmlogAPI) -> str:
         # 检查是否是远程URL
         if image_path.startswith('http'):
             # 检查是否已经是Emlog服务器的图片（避免重复上传）
-            
             try:
                 base_parsed = urlparse(api.base_url)
                 image_parsed = urlparse(image_path)
@@ -399,16 +414,43 @@ def process_images(content: str, work_tree: str, api: EmlogAPI) -> str:
         # 构建完整路径
         full_path = os.path.join(work_tree, decoded_path)
         
-        if os.path.exists(full_path):
-            try:
-                uploaded_url = api.upload_image(full_path)
-                logging.info(f"图片上传成功: {decoded_path} -> {uploaded_url}")
-                return f'![{alt_text}]({uploaded_url})'
-            except Exception as e:
-                logging.warning(f"图片上传失败 {decoded_path}: {e}")
-                return match.group(0)
-        else:
+        if not os.path.exists(full_path):
             logging.warning(f"图片不存在: {decoded_path} (完整路径: {full_path})")
+            return match.group(0)
+        
+        # 使用相对路径作为 key（相对于 work_tree）
+        rel_path = decoded_path.replace('\\', '/')  # 统一使用 / 分隔符
+        
+        # 检查缓存中是否已有记录
+        if cache is not None and rel_path in image_map:
+            cached_info = image_map[rel_path]
+            cached_url = cached_info.get('url')
+            cached_md5 = cached_info.get('md5', '')
+            
+            # 计算当前图片的 MD5
+            current_md5 = calculate_md5(full_path)
+            
+            # 如果图片没有变化且缓存中有URL，直接使用
+            if cached_md5 == current_md5 and cached_url:
+                logging.debug(f"使用缓存的图片URL: {decoded_path} -> {cached_url}")
+                return f'![{alt_text}]({cached_url})'
+        
+        # 需要上传图片（缓存中没有或MD5不匹配）
+        try:
+            uploaded_url = api.upload_image(full_path)
+            logging.info(f"图片上传成功: {decoded_path} -> {uploaded_url}")
+            
+            # 记录到缓存
+            if cache is not None:
+                current_md5 = calculate_md5(full_path)
+                image_map[rel_path] = {
+                    'url': uploaded_url,
+                    'md5': current_md5
+                }
+            
+            return f'![{alt_text}]({uploaded_url})'
+        except Exception as e:
+            logging.warning(f"图片上传失败 {decoded_path}: {e}")
             return match.group(0)
     
     return re.sub(pattern, replace_image, content)
@@ -425,7 +467,7 @@ def generate_excerpt(content: str, max_length: int = 100) -> str:
     return text[:max_length] + '...'
 
 def build_article_data(front_matter: Dict, content: str, excerpt: str, 
-                       api: EmlogAPI, work_tree: str = None) -> Dict:
+                       api: EmlogAPI, work_tree: str = None, cache: Dict = None) -> Dict:
     """构建文章数据"""
     # 基本字段
     data = {
@@ -462,15 +504,66 @@ def build_article_data(front_matter: Dict, content: str, excerpt: str,
                 full_cover_path = os.path.join(work_tree, cover_path)
                 
                 if os.path.exists(full_cover_path):
-                    try:
-                        # 上传封面图
-                        uploaded_url = api.upload_image(full_cover_path)
-                        data['cover'] = uploaded_url
-                        logging.info(f"封面图上传成功: {cover_path} -> {uploaded_url}")
-                    except Exception as e:
-                        logging.warning(f"封面图上传失败: {cover_path}, 错误: {e}")
-                        # 上传失败，使用原路径（可能无法显示）
-                        data['cover'] = cover
+                    # 初始化图片映射（如果不存在）
+                    if cache is not None:
+                        if 'images' not in cache:
+                            cache['images'] = {}
+                        image_map = cache['images']
+                    else:
+                        image_map = {}
+                    
+                    # 使用相对路径作为 key（相对于 work_tree）
+                    rel_path = cover_path.replace('\\', '/')  # 统一使用 / 分隔符
+                    
+                    # 检查缓存中是否已有记录
+                    if cache is not None and rel_path in image_map:
+                        cached_info = image_map[rel_path]
+                        cached_url = cached_info.get('url')
+                        cached_md5 = cached_info.get('md5', '')
+                        
+                        # 计算当前封面图的 MD5
+                        current_md5 = calculate_md5(full_cover_path)
+                        
+                        # 如果封面图没有变化且缓存中有URL，直接使用
+                        if cached_md5 == current_md5 and cached_url:
+                            logging.debug(f"使用缓存的封面图URL: {cover_path} -> {cached_url}")
+                            data['cover'] = cached_url
+                        else:
+                            # MD5不匹配，需要重新上传
+                            try:
+                                uploaded_url = api.upload_image(full_cover_path)
+                                data['cover'] = uploaded_url
+                                logging.info(f"封面图上传成功: {cover_path} -> {uploaded_url}")
+                                
+                                # 更新缓存
+                                if cache is not None:
+                                    current_md5 = calculate_md5(full_cover_path)
+                                    image_map[rel_path] = {
+                                        'url': uploaded_url,
+                                        'md5': current_md5
+                                    }
+                            except Exception as e:
+                                logging.warning(f"封面图上传失败: {cover_path}, 错误: {e}")
+                                # 上传失败，使用原路径（可能无法显示）
+                                data['cover'] = cover
+                    else:
+                        # 缓存中没有记录，需要上传
+                        try:
+                            uploaded_url = api.upload_image(full_cover_path)
+                            data['cover'] = uploaded_url
+                            logging.info(f"封面图上传成功: {cover_path} -> {uploaded_url}")
+                            
+                            # 记录到缓存
+                            if cache is not None:
+                                current_md5 = calculate_md5(full_cover_path)
+                                image_map[rel_path] = {
+                                    'url': uploaded_url,
+                                    'md5': current_md5
+                                }
+                        except Exception as e:
+                            logging.warning(f"封面图上传失败: {cover_path}, 错误: {e}")
+                            # 上传失败，使用原路径（可能无法显示）
+                            data['cover'] = cover
                 else:
                     logging.warning(f"封面图不存在: {full_cover_path}")
                     # 文件不存在，仍然使用原路径
@@ -531,13 +624,13 @@ def build_article_data(front_matter: Dict, content: str, excerpt: str,
     
     return data
 
-def publish_article(file_path: str, work_tree: str, api: EmlogAPI, config: Dict) -> int:
+def publish_article(file_path: str, work_tree: str, api: EmlogAPI, config: Dict, cache: Dict = None) -> int:
     """发布文章"""
     full_path = os.path.join(work_tree, file_path)
     front_matter, content = parse_markdown(full_path)
     
-    # 处理图片
-    content = process_images(content, work_tree, api)
+    # 处理图片（传入缓存）
+    content = process_images(content, work_tree, api, cache)
     
     # 生成摘要
     ai_config = config.get('ai', {})
@@ -547,8 +640,8 @@ def publish_article(file_path: str, work_tree: str, api: EmlogAPI, config: Dict)
     else:
         excerpt = generate_excerpt(content, 100)
     
-    # 构建数据
-    article_data = build_article_data(front_matter, content, excerpt, api, work_tree)
+    # 构建数据（传入缓存）
+    article_data = build_article_data(front_matter, content, excerpt, api, work_tree, cache)
     
     # 发布
     article_id = api.create_article(article_data)
@@ -557,13 +650,13 @@ def publish_article(file_path: str, work_tree: str, api: EmlogAPI, config: Dict)
     return article_id
 
 def update_article(file_path: str, article_id: int, work_tree: str, 
-                   api: EmlogAPI, config: Dict):
+                   api: EmlogAPI, config: Dict, cache: Dict = None):
     """更新文章"""
     full_path = os.path.join(work_tree, file_path)
     front_matter, content = parse_markdown(full_path)
     
-    # 处理图片
-    content = process_images(content, work_tree, api)
+    # 处理图片（传入缓存）
+    content = process_images(content, work_tree, api, cache)
     
     # 生成摘要
     ai_config = config.get('ai', {})
@@ -572,8 +665,8 @@ def update_article(file_path: str, article_id: int, work_tree: str,
     else:
         excerpt = generate_excerpt(content, 100)
     
-    # 构建数据
-    article_data = build_article_data(front_matter, content, excerpt, api, work_tree)
+    # 构建数据（传入缓存）
+    article_data = build_article_data(front_matter, content, excerpt, api, work_tree, cache)
     article_data['id'] = article_id
     
     # 更新
@@ -659,7 +752,7 @@ def initialize_sync_mode(files: List[str], work_tree: str, config: Dict,
         print(f"\n正在同步: {file_path}")
         
         try:
-            article_id = publish_article(file_path, work_tree, api, config)
+            article_id = publish_article(file_path, work_tree, api, config, cache)
             cache['files'][file_path] = {
                 "status": "synced",
                 "emlog_id": article_id,
@@ -858,7 +951,7 @@ def sync_to_emlog(cache: Dict, work_tree: str, config: Dict, force_update: bool 
     for file_path, file_info in files_to_create:
         try:
             print(f"\n[发布新文章] {file_path}")
-            article_id = publish_article(file_path, work_tree, api, config)
+            article_id = publish_article(file_path, work_tree, api, config, cache)
             
             cache['files'][file_path]['status'] = 'synced'
             cache['files'][file_path]['emlog_id'] = article_id
@@ -886,12 +979,12 @@ def sync_to_emlog(cache: Dict, work_tree: str, config: Dict, force_update: bool 
             
             if not emlog_id:
                 print(f"\n[发布新文章] {file_path} (之前未同步)")
-                article_id = publish_article(file_path, work_tree, api, config)
+                article_id = publish_article(file_path, work_tree, api, config, cache)
                 cache['files'][file_path]['emlog_id'] = article_id
                 stats['created'] += 1
             else:
                 print(f"\n[更新文章] {file_path} (ID: {emlog_id})")
-                update_article(file_path, emlog_id, work_tree, api, config)
+                update_article(file_path, emlog_id, work_tree, api, config, cache)
                 stats['updated'] += 1
             
             cache['files'][file_path]['status'] = 'synced'
@@ -933,10 +1026,10 @@ def sync_to_emlog(cache: Dict, work_tree: str, config: Dict, force_update: bool 
                 print(f"\n[重试] {file_path} (第 {retry_count + 1} 次)")
             
             if emlog_id:
-                update_article(file_path, emlog_id, work_tree, api, config)
+                update_article(file_path, emlog_id, work_tree, api, config, cache)
                 stats['updated'] += 1
             else:
-                article_id = publish_article(file_path, work_tree, api, config)
+                article_id = publish_article(file_path, work_tree, api, config, cache)
                 cache['files'][file_path]['emlog_id'] = article_id
                 stats['created'] += 1
             
