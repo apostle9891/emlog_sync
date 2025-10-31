@@ -51,8 +51,7 @@ emlog:
   default_category_id: 1                # 默认分类 ID（无分类时使用）
 
 git:
-  work_tree: "/var/www/hexo"            # Git 工作目录
-  git_dir: "/var/repo/blog.git"         # Git 仓库目录
+  work_tree: "/var/www/hexo"            # Git 工作目录,会自动扫描工作目录下的所有.md文件
 ```
 
 **重要配置说明：**
