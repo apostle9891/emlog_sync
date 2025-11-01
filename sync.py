@@ -455,6 +455,109 @@ def process_images(content: str, work_tree: str, api: EmlogAPI, cache: Dict = No
     
     return re.sub(pattern, replace_image, content)
 
+def process_videos(content: str, work_tree: str, api: EmlogAPI, cache: Dict = None) -> str:
+    """处理 Markdown 中的视频（HTML video 标签）
+    
+    Args:
+        content: Markdown 内容
+        work_tree: 工作目录
+        api: EmlogAPI 实例
+        cache: 缓存数据，用于记录已上传的视频（与图片共享缓存）
+    """
+    import urllib.parse
+    from urllib.parse import urlparse
+    
+    # 初始化图片映射（视频与图片共享同一个缓存）
+    if cache is not None:
+        if 'images' not in cache:
+            cache['images'] = {}
+        image_map = cache['images']
+    else:
+        image_map = {}
+    
+    # 匹配 <video> 标签中的 <source src="...">
+    # 支持单行和多行格式
+    pattern = r'(<video[^>]*>)\s*<source\s+src=["\']([^"\']+)["\']([^>]*)>'
+    
+    def replace_video(match):
+        video_tag_start = match.group(1)  # <video ...>
+        video_path = match.group(2)       # src 中的路径
+        source_attrs = match.group(3)    # source 的其他属性
+        
+        # 检查是否是远程URL
+        if video_path.startswith('http'):
+            # 检查是否已经是Emlog服务器的视频（避免重复上传）
+            try:
+                base_parsed = urlparse(api.base_url)
+                video_parsed = urlparse(video_path)
+                
+                # 比较域名（包括端口号）
+                base_netloc = base_parsed.netloc.lower()
+                video_netloc = video_parsed.netloc.lower()
+                
+                # 如果视频URL的域名与Emlog服务器域名相同，说明已经上传过，不处理
+                if base_netloc == video_netloc:
+                    logging.debug(f"视频已存在于Emlog服务器，跳过上传: {video_path}")
+                    return match.group(0)
+            except Exception as e:
+                logging.debug(f"解析URL失败，跳过域名检查: {e}")
+            
+            # 外部其他服务器的视频，不处理
+            return match.group(0)
+        
+        # URL解码（处理 %20 等编码）
+        decoded_path = urllib.parse.unquote(video_path)
+        
+        # 处理相对路径，确保相对于 work_tree
+        # 如果是 /images/xxx.mp4 格式，去掉开头的 /
+        if decoded_path.startswith('/'):
+            decoded_path = decoded_path.lstrip('/')
+        
+        # 构建完整路径
+        full_path = os.path.join(work_tree, decoded_path)
+        
+        if not os.path.exists(full_path):
+            logging.warning(f"视频不存在: {decoded_path} (完整路径: {full_path})")
+            return match.group(0)
+        
+        # 使用相对路径作为 key（相对于 work_tree）
+        rel_path = decoded_path.replace('\\', '/')  # 统一使用 / 分隔符
+        
+        # 检查缓存中是否已有记录
+        if cache is not None and rel_path in image_map:
+            cached_info = image_map[rel_path]
+            cached_url = cached_info.get('url')
+            cached_md5 = cached_info.get('md5', '')
+            
+            # 计算当前视频的 MD5
+            current_md5 = calculate_md5(full_path)
+            
+            # 如果视频没有变化且缓存中有URL，直接使用
+            if cached_md5 == current_md5 and cached_url:
+                logging.debug(f"使用缓存的视频URL: {decoded_path} -> {cached_url}")
+                return f'{video_tag_start}<source src="{cached_url}"{source_attrs}>'
+        
+        # 需要上传视频（缓存中没有或MD5不匹配）
+        try:
+            # 使用 upload_image 接口上传（Emlog的upload接口应该也支持视频）
+            uploaded_url = api.upload_image(full_path)
+            logging.info(f"视频上传成功: {decoded_path} -> {uploaded_url}")
+            
+            # 记录到缓存
+            if cache is not None:
+                current_md5 = calculate_md5(full_path)
+                image_map[rel_path] = {
+                    'url': uploaded_url,
+                    'md5': current_md5
+                }
+            
+            return f'{video_tag_start}<source src="{uploaded_url}"{source_attrs}>'
+        except Exception as e:
+            logging.warning(f"视频上传失败 {decoded_path}: {e}")
+            return match.group(0)
+    
+    return re.sub(pattern, replace_video, content, flags=re.IGNORECASE | re.MULTILINE)
+
 def generate_excerpt(content: str, max_length: int = 100) -> str:
     """生成文章摘要（简单截取前N字）"""
     # 移除 Markdown 标记
@@ -632,6 +735,9 @@ def publish_article(file_path: str, work_tree: str, api: EmlogAPI, config: Dict,
     # 处理图片（传入缓存）
     content = process_images(content, work_tree, api, cache)
     
+    # 处理视频（传入缓存，与图片共享缓存）
+    content = process_videos(content, work_tree, api, cache)
+    
     # 生成摘要
     ai_config = config.get('ai', {})
     if ai_config.get('enabled', False):
@@ -657,6 +763,9 @@ def update_article(file_path: str, article_id: int, work_tree: str,
     
     # 处理图片（传入缓存）
     content = process_images(content, work_tree, api, cache)
+    
+    # 处理视频（传入缓存，与图片共享缓存）
+    content = process_videos(content, work_tree, api, cache)
     
     # 生成摘要
     ai_config = config.get('ai', {})
